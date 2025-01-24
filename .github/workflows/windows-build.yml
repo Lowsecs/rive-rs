@@ -1,0 +1,48 @@
+name: Windows Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-windows:
+    name: Build on Windows
+    runs-on: windows-latest
+
+    steps:
+      # Step 1: Check out the repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Step 2: Install Rust toolchain
+      - name: Install Rust stable
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-pc-windows-msvc
+          override: true
+
+      # Step 3: Set up Visual Studio environment (optional, if needed)
+      - name: Setup Visual Studio
+        uses: microsoft/setup-msbuild@v1.1
+        with:
+          vs-version: 'latest'
+
+      # Step 4: Build the project
+      - name: Cargo build
+        run: cargo build --release
+
+      # Step 5: Upload build artifacts
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: rive-rs-windows-build
+          path: |
+            target\release\rive-rs.exe
+            # Add other relevant artifacts if needed, e.g., DLLs or LIBs
