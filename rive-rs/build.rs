@@ -25,18 +25,48 @@ fn main() {
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("../submodules/rive-cpp"));
 
+    let is_msvc = cfg!(target_env = "msvc");
+
+    let cpp_standard_flag = if is_msvc {
+        "/std:c++14"
+    } else {
+        "-std=c++14"
+    };
+
+    // Set the exception handling flag for MSVC
+    let eh_flag = if is_msvc {
+        "/EHsc"
+    } else {
+        ""
+    };
+
+    // Compile ffi.cpp
     cc::Build::new()
         .cpp(true)
         .include(rive_cpp_path.join("include"))
         .file("src/ffi.cpp")
-        .flag("-std=c++14")
+        .flag(cpp_standard_flag)
+        .flag(eh_flag)
         .warnings(false)
         .compile("rive-ffi");
 
+    // Compile Yoga if the 'layout' feature is enabled
     if cfg!(feature = "layout") {
+        let layout_flag = if is_msvc {
+            "/std:c++11"
+        } else {
+            "-std=c++11"
+        };
+        let layout_eh_flag = if is_msvc {
+            "/EHsc"
+        } else {
+            ""
+        };
+
         cc::Build::new()
             .cpp(true)
-            .flag("-std=c++11")
+            .flag(layout_flag)
+            .flag(layout_eh_flag)
             .files(all_files_with_extension("../submodules/yoga/yoga", "cpp"))
             .include("../submodules/yoga")
             .define("YOGA_EXPORT=", None)
@@ -44,33 +74,36 @@ fn main() {
             .compile("yoga");
     }
 
+    // Compile HarfBuzz and SheenBidi if the 'text' feature is enabled
     if cfg!(feature = "text") {
         let target = env::var("TARGET").unwrap();
         let profile = env::var("PROFILE").unwrap();
 
-        let mut cfg = cc::Build::new();
-        cfg.cpp(true)
-            .flag_if_supported("-std=c++11") // for unix
+        let mut cfg_build = cc::Build::new();
+        cfg_build
+            .cpp(true)
+            .flag_if_supported(if is_msvc { "/std:c++11" } else { "-std=c++11" })
+            .flag_if_supported(if is_msvc { "/EHsc" } else { "" })
             .warnings(false)
             .file("../submodules/harfbuzz/src/harfbuzz.cc");
 
         if !target.contains("windows") {
-            cfg.define("HAVE_PTHREAD", "1");
+            cfg_build.define("HAVE_PTHREAD", "1");
         }
 
         if target.contains("apple") && profile.contains("release") {
-            cfg.define("HAVE_CORETEXT", "1");
+            cfg_build.define("HAVE_CORETEXT", "1");
         }
 
         if target.contains("windows") {
-            cfg.define("HAVE_DIRECTWRITE", "1");
+            cfg_build.define("HAVE_DIRECTWRITE", "1");
         }
 
         if target.contains("windows-gnu") {
-            cfg.flag("-Wa,-mbig-obj");
+            cfg_build.flag("-Wa,-mbig-obj");
         }
 
-        cfg.compile("harfbuzz");
+        cfg_build.compile("harfbuzz");
 
         cc::Build::new()
             .files(all_files_with_extension(
@@ -78,30 +111,44 @@ fn main() {
                 "c",
             ))
             .include("../submodules/SheenBidi/Headers")
+            .flag_if_supported(if is_msvc { "/EHsc" } else { "" })
             .warnings(false)
             .compile("sheenbidi");
     }
 
-    let mut cfg = cc::Build::new();
-    cfg.cpp(true)
+    // Compile the main Rive library
+    let mut cfg_final = cc::Build::new();
+    cfg_final
+        .cpp(true)
         .include(rive_cpp_path.join("include"))
         .files(all_files_with_extension(rive_cpp_path.join("src"), "cpp"))
-        .flag("-std=c++14")
+        .flag(cpp_standard_flag)
+        .flag(eh_flag)
         .define("_RIVE_INTERNAL_", None)
         .warnings(false);
 
     if cfg!(feature = "text") {
-        cfg.include("../submodules/harfbuzz/src")
+        cfg_final
+            .include("../submodules/harfbuzz/src")
             .include("../submodules/SheenBidi/Headers")
-            .flag_if_supported("-Wno-deprecated-declarations")
+            .flag_if_supported(if is_msvc {
+                "/Wno-deprecated-declarations"
+            } else {
+                "-Wno-deprecated-declarations"
+            })
             .define("WITH_RIVE_TEXT", None);
     }
     if cfg!(feature = "layout") {
-        cfg.include("../submodules/yoga")
-            .flag_if_supported("-Wno-deprecated-declarations")
+        cfg_final
+            .include("../submodules/yoga")
+            .flag_if_supported(if is_msvc {
+                "/Wno-deprecated-declarations"
+            } else {
+                "-Wno-deprecated-declarations"
+            })
             .define("WITH_RIVE_LAYOUT", None)
             .define("YOGA_EXPORT=", None);
     }
 
-    cfg.compile("rive");
+    cfg_final.compile("rive");
 }
